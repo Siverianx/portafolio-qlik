@@ -1,0 +1,562 @@
+///$tab PRINCIPAL
+/*
+	RESUMEN — Comercializadora Andina S.A.S.
+	========================================
+
+	Aplicacion de demostracion. TODOS los datos son SINTETICOS: se generan en este
+	mismo script con AutoGenerate y no hay una sola conexion a un origen real.
+
+	Modelo: estrella con un unico hecho.
+
+		Hechos_Comercial  (Real + Presupuesto concatenados en la misma tabla)
+			|-- Calendario      por  Fecha
+			|-- Clientes        por  %LlaveCliente
+			|-- Productos       por  %LlaveProducto
+			|-- Paises          por  %LlavePais
+			|-- Vendedores      por  %LlaveVendedor
+
+	Dos decisiones del modelo que valen mas que el codigo:
+
+	1. El PRESUPUESTO no es una tabla aparte. Va concatenado al hecho con el campo
+	   `Origen`, asi que real y presupuesto comparten calendario, producto y pais sin
+	   una sola clave sintetica y sin lazo circular. Lo que separa los dos mundos es
+	   set analysis: {<Origen={'Real'}>} frente a {<Origen={'Presupuesto'}>}.
+
+	2. El PAIS cuelga del hecho, no del cliente. Si `Paises` colgara de `Clientes` y a
+	   la vez del hecho, el modelo cerraria un lazo circular. Se resuelve en la carga
+	   con ApplyMap: el hecho ya llega con su %LlavePais resuelta.
+
+	Aaronnys Saul Ortiz Molina
+*/
+
+SET ThousandSep	= '.';
+SET DecimalSep	= ',';
+SET MoneyThousandSep	= '.';
+SET MoneyDecimalSep	= ',';
+SET MoneyFormat	= '$ #.##0,00;-$ #.##0,00';
+SET TimeFormat	= 'h:mm:ss TT';
+SET DateFormat	= 'DD/MM/YYYY';
+SET TimestampFormat	= 'DD/MM/YYYY h:mm:ss[.fff] TT';
+SET FirstWeekDay	= 0;
+SET BrokenWeeks	= 0;
+SET ReferenceDay	= 4;
+SET FirstMonthOfYear	= 1;
+SET CollationLocale	= 'es-CO';
+SET MonthNames	= 'ene;feb;mar;abr;may;jun;jul;ago;sep;oct;nov;dic';
+SET LongMonthNames	= 'enero;febrero;marzo;abril;mayo;junio;julio;agosto;septiembre;octubre;noviembre;diciembre';
+SET DayNames	= 'lun;mar;mié;jue;vie;sáb;dom';
+SET LongDayNames	= 'lunes;martes;miércoles;jueves;viernes;sábado;domingo';
+SET NumericalAbbreviation = '3:k;6:M;9:G;12:T';
+
+/* El ultimo dia con venta real. Se fija a mano para que la app sea reproducible:
+   con Today() el resultado cambiaria cada dia y las capturas dejarian de cuadrar. */
+LET vFechaCorte	= Num(MakeDate(2026, 9, 20));
+LET vAnioIni	= 2023;
+LET vAnioFin	= Year($(vFechaCorte));
+
+TRACE >> Corte: $(vFechaCorte)  ($(vAnioIni) - $(vAnioFin));
+
+///$tab MAP CATALOGOS
+/*
+	Los catalogos entran INLINE porque en el original vendrian de un Excel del area
+	comercial. Al llegar, cada uno deja su tabla de mapeo: el hecho resuelve todo con
+	ApplyMap y no necesita un solo JOIN.
+*/
+
+Paises:
+LOAD
+	/* LLAVES */
+	RowNo()							as %LlavePais,
+	/* DATOS */
+	Pais,
+	Region_Comercial,
+	Continente
+;
+LOAD * INLINE [
+Pais, Region_Comercial, Continente
+Países Bajos, Europa, Europa
+Alemania, Europa, Europa
+España, Europa, Europa
+Italia, Europa, Europa
+Bélgica, Europa, Europa
+Reino Unido, Europa, Europa
+Francia, Europa, Europa
+Estados Unidos, Norteamérica, América
+Canadá, Norteamérica, América
+México, Norteamérica, América
+Japón, Asia Pacífico, Asia
+Corea del Sur, Asia Pacífico, Asia
+China, Asia Pacífico, Asia
+Singapur, Asia Pacífico, Asia
+Australia, Asia Pacífico, Oceanía
+Brasil, Cono Sur, América
+Chile, Cono Sur, América
+Argentina, Cono Sur, América
+Perú, Andina, América
+Ecuador, Andina, América
+Panamá, Centroamérica, América
+Costa Rica, Centroamérica, América
+];
+
+Productos:
+LOAD
+	/* LLAVES */
+	RowNo()							as %LlaveProducto,
+	/* DATOS */
+	Producto,
+	Linea,
+	Categoria,
+	Certificacion,
+	Presentacion,
+	Precio_Base_USD
+;
+LOAD * INLINE [
+Producto, Linea, Categoria, Certificacion, Presentacion, Precio_Base_USD
+Café verde excelso, Café, Grano, Orgánico, Saco 70 kg, 5850
+Café verde supremo, Café, Grano, Convencional, Saco 70 kg, 4980
+Café verde UGQ, Café, Grano, Convencional, Saco 70 kg, 4310
+Café tostado molido, Café, Transformado, Orgánico, Caja 12x500 g, 9400
+Café liofilizado, Café, Transformado, Convencional, Caja 6x200 g, 12600
+Cacao en grano, Cacao, Grano, Orgánico, Saco 60 kg, 7250
+Cacao fino de aroma, Cacao, Grano, Orgánico, Saco 60 kg, 9100
+Licor de cacao, Cacao, Transformado, Convencional, Bloque 25 kg, 8300
+Manteca de cacao, Cacao, Transformado, Convencional, Caja 25 kg, 10750
+Torta de cacao, Cacao, Transformado, Convencional, Saco 25 kg, 3980
+Banano Cavendish orgánico, Banano, Fresco, Orgánico, Caja 18.14 kg, 1180
+Banano Cavendish, Banano, Fresco, Convencional, Caja 18.14 kg, 940
+Banano baby, Banano, Fresco, Orgánico, Caja 5 kg, 1620
+Plátano hartón, Banano, Fresco, Convencional, Caja 22 kg, 860
+Aguacate Hass calibre 12, Aguacate, Fresco, Convencional, Caja 4 kg, 2450
+Aguacate Hass calibre 16, Aguacate, Fresco, Convencional, Caja 4 kg, 2190
+Aguacate Hass orgánico, Aguacate, Fresco, Orgánico, Caja 4 kg, 3100
+Pulpa de aguacate, Aguacate, Transformado, Convencional, Bolsa 10 kg, 3640
+Aceite de palma crudo, Palma, Aceite, RSPO, Granel, 1020
+Aceite de palma RBD, Palma, Aceite, RSPO, Flexitanque, 1190
+Estearina de palma, Palma, Aceite, Convencional, Flexitanque, 1080
+Oleína de palma, Palma, Aceite, RSPO, Flexitanque, 1240
+Aceite de palmiste, Palma, Aceite, Convencional, Granel, 1480
+Panela pulverizada, Panela, Transformado, Orgánico, Saco 25 kg, 1340
+Panela en bloque, Panela, Transformado, Convencional, Caja 20 kg, 1090
+];
+
+Vendedores:
+LOAD
+	/* LLAVES */
+	RowNo()							as %LlaveVendedor,
+	/* DATOS */
+	Vendedor,
+	Equipo_Comercial
+;
+LOAD * INLINE [
+Vendedor, Equipo_Comercial
+Camila Restrepo, Europa
+Andrés Villalba, Europa
+Lucía Ferrer, Europa
+Mariana Osorio, Norteamérica
+Julián Paredes, Norteamérica
+Tomás Belmonte, Asia Pacífico
+Valeria Nieto, Asia Pacífico
+Ricardo Salcedo, Américas
+Paula Guerrero, Américas
+Esteban Cardona, Américas
+Natalia Ruíz, Europa
+Óscar Mendivil, Asia Pacífico
+];
+
+/* Las de mapeo salen de las tablas que acabamos de cargar, no de un segundo INLINE:
+   asi el catalogo tiene un solo sitio donde cambiar. */
+MAP_Producto_Precio:
+MAPPING LOAD %LlaveProducto, Precio_Base_USD	RESIDENT Productos;
+
+/*
+	Margen objetivo por producto. Tampoco es adorno: si el margen fuera ruido puro, los
+	240 clientes saldrian todos en el mismo 21 % y el grafico de «donde esta el margen»
+	no tendria nada que senalar. Aqui el margen depende de la linea (un commodity a
+	granel margina menos que un transformado) y de la certificacion, que es la razon por
+	la que existe la certificacion.
+*/
+MAP_Producto_Margen:
+MAPPING LOAD
+	%LlaveProducto,
+	Pick(Match(Linea, 'Café', 'Cacao', 'Banano', 'Aguacate', 'Palma', 'Panela'),
+		0.24, 0.27, 0.12, 0.30, 0.13, 0.19)
+	+ If(Certificacion = 'Orgánico', 0.07, If(Certificacion = 'RSPO', 0.03, 0))
+	+ If(Categoria = 'Transformado', 0.05, 0)
+RESIDENT Productos;
+
+/*
+	Sesgo de la META por linea.
+
+	Existe para que el tablero tenga algo que decir. Con la meta calculada solo con ruido
+	aleatorio, al agregar por linea o por region la media se come la varianza y los seis
+	cumplimientos salen entre 92 % y 95 %: seis barras iguales. Con un sesgo sistematico
+	hay lineas que cumplen y lineas que no, que es lo que se mira en un seguimiento de
+	presupuesto.
+*/
+MAP_Producto_SesgoMeta:
+MAPPING LOAD
+	%LlaveProducto,
+	Pick(Match(Linea, 'Café', 'Cacao', 'Banano', 'Aguacate', 'Palma', 'Panela'),
+		0.94, 1.12, 0.84, 1.03, 0.97, 0.89)
+RESIDENT Productos;
+
+/* El sesgo va por REGION, no por pais: con un sesgo por pais, al agregar los 22 paises
+   en 6 regiones la media vuelve a aplanarlo todo y las seis barras salen iguales otra
+   vez. La varianza tiene que estar en el nivel en el que se va a mirar. */
+MAP_Pais_SesgoMeta:
+MAPPING LOAD
+	%LlavePais,
+	Pick(Match(Region_Comercial, 'Europa', 'Norteamérica', 'Asia Pacífico', 'Cono Sur', 'Andina', 'Centroamérica'),
+		0.92, 1.01, 0.86, 0.97, 0.89, 0.94)
+RESIDENT Paises;
+
+LET vNumPaises		= NoOfRows('Paises');
+LET vNumProductos	= NoOfRows('Productos');
+LET vNumVendedores	= NoOfRows('Vendedores');
+
+///$tab DIM CLIENTES
+/*
+	240 clientes sinteticos. El pais NO vive aqui a proposito: si `Paises` colgara a la
+	vez de `Clientes` y del hecho, el modelo cerraria un lazo circular. La relacion
+	cliente-pais queda en una tabla de mapeo y solo el hecho lleva la llave.
+*/
+
+Clientes:
+LOAD
+	/* LLAVES */
+	%LlaveCliente,
+	/* DATOS */
+	'CL-' & Num(%LlaveCliente, '0000')			as Codigo_Cliente,
+	Cliente,
+	Segmento,
+	Canal_Comercial,
+	Cliente_Desde,
+	Year(Cliente_Desde)					as Anio_Alta_Cliente
+;
+LOAD
+	RecNo()							as %LlaveCliente,
+	Pick(Ceil(Rand() * 12),
+		'Nordic', 'Atlantic', 'Global', 'Premium', 'Urban', 'Andes',
+		'Harvest', 'Meridian', 'Pacific', 'Origen', 'Terra', 'Delta')
+	& ' ' &
+	Pick(Ceil(Rand() * 10),
+		'Foods', 'Trading', 'Commodities', 'Imports', 'Distribution',
+		'Coffee Co', 'Organics', 'Group', 'Partners', 'Market')
+	& ' ' &
+	Pick(Ceil(Rand() * 6), 'BV', 'GmbH', 'LLC', 'S.A.', 'Ltd', 'Co.')
+	& ' ' & Num(RecNo(), '000')				as Cliente,
+	Pick(Ceil(Rand() * 10),
+		'Retail', 'Retail', 'Industrial', 'Industrial', 'Industrial',
+		'Food service', 'Food service', 'Trader', 'Trader', 'Marca propia')	as Segmento,
+	Pick(Ceil(Rand() * 8),
+		'Directo', 'Directo', 'Directo', 'Directo',
+		'Distribuidor', 'Distribuidor', 'Bróker', 'Marketplace')		as Canal_Comercial,
+	Date(MakeDate(2015, 1, 1) + Floor(Rand() * 3900))	as Cliente_Desde
+AutoGenerate 240;
+
+/* Cada cliente exporta siempre al mismo pais: la relacion cliente-pais es estable en
+   el negocio, y sortearla en cada factura romperia cualquier analisis por pais. */
+MAP_Cliente_Pais:
+MAPPING LOAD
+	RecNo()							as %LlaveCliente,
+	Ceil(Rand() * $(vNumPaises))				as %LlavePais
+AutoGenerate 240;
+
+/*
+	Lo que cada cliente negocia, en puntos de margen sobre el del producto.
+
+	El grueso lo pone el SEGMENTO, no el azar: un trader compra para revender y aprieta,
+	una marca propia paga por el origen. Si esto fuera solo ruido, al agrupar la cartera
+	por segmento los cinco saldrian iguales y el treemap no separaria nada.
+*/
+MAP_Cliente_SesgoMargen:
+MAPPING LOAD
+	%LlaveCliente,
+	Pick(Match(Segmento, 'Retail', 'Industrial', 'Food service', 'Trader', 'Marca propia'),
+		0.05, 0.00, 0.02, -0.07, 0.07)
+	+ (-0.04 + Rand() * 0.08)
+RESIDENT Clientes;
+
+/*
+	La cartera NO es la misma todos los anos, y esto tampoco es un adorno: si los 240
+	clientes compraran los cuatro anos, "clientes nuevos" seria 240 el primer ano y cero
+	despues, y el tablero no tendria nada que contar.
+
+	Cada ano factura una ventana de la lista: entran clientes por arriba (altas) y dejan
+	de comprar los primeros de la lista (bajas).
+*/
+Ventana_Cartera:
+LOAD * INLINE [
+Anio_Cartera, Cliente_Desde_Idx, Cliente_Hasta_Idx
+2023, 0, 180
+2024, 0, 205
+2025, 8, 228
+2026, 15, 240
+];
+
+
+
+///$tab HECHOS COMERCIAL
+/*
+	El hecho. Una fila por linea de factura.
+
+	Se genera ano por ano para que el volumen crezca de forma creible y para que 2026
+	quede a medias, hasta la fecha de corte: sin eso, cualquier comparacion contra el
+	ano anterior saldria plana y el tablero no probaria nada.
+
+	El precio no es aleatorio puro: sale del precio base del producto, con una deriva
+	anual y un descuento por volumen. Un dato inventado que no respeta la logica del
+	negocio se nota a la primera.
+*/
+
+Hechos_Comercial:
+LOAD * INLINE [
+%LlaveCliente, %LlaveProducto, %LlavePais, %LlaveVendedor, Fecha, Origen, Numero_Documento, Toneladas, Valor_USD, Costo_USD
+];
+
+FOR vAnio = $(vAnioIni) TO $(vAnioFin)
+
+	/* Volumen creciente. El ano en curso va prorrateado a la fecha de corte. */
+	LET vFilasAnio	= 46000 + ($(vAnio) - $(vAnioIni)) * 7000;
+	LET vDiaIni	= Num(MakeDate($(vAnio), 1, 1));
+	LET vDiaFin	= Num(RangeMin(MakeDate($(vAnio), 12, 31), $(vFechaCorte)));
+	LET vDias	= $(vDiaFin) - $(vDiaIni) + 1;
+	LET vFilas	= Round($(vFilasAnio) * $(vDias) / 365);
+
+	/* La ventana de cartera del ano. Enteros los dos: una variable con decimales,
+	   expandida dentro de una expresion, arrastra la coma del DecimalSep. */
+	LET vCliDesde	= Peek('Cliente_Desde_Idx', $(vAnio) - $(vAnioIni), 'Ventana_Cartera');
+	LET vCliRango	= Peek('Cliente_Hasta_Idx', $(vAnio) - $(vAnioIni), 'Ventana_Cartera') - $(vCliDesde);
+
+	TRACE >> $(vAnio): $(vFilas) lineas sobre $(vDias) dias, clientes $(vCliDesde)+1 a $(vCliDesde)+$(vCliRango);
+
+	CONCATENATE (Hechos_Comercial)
+	LOAD
+		/* LLAVES */
+		%LlaveCliente,
+		%LlaveProducto,
+		ApplyMap('MAP_Cliente_Pais', %LlaveCliente)		as %LlavePais,
+		%LlaveVendedor,
+		/* FECHAS */
+		Fecha,
+		/* DATOS */
+		'Real'							as Origen,
+		'FE-$(vAnio)-' & Num(RecNo(), '00000')			as Numero_Documento,
+		Toneladas,
+		Round(Toneladas * Precio_Unitario_USD, 0.01)		as Valor_USD,
+		Round(Toneladas * Precio_Unitario_USD * Factor_Costo, 0.01)	as Costo_USD
+	;
+	LOAD
+		*,
+		/* Deriva anual del precio, descuento por volumen y ruido.
+
+		   La deriva se calcula AQUI, como campo, y no en una variable del bucle: con
+		   DecimalSep=',' un LET guarda 1,043 como texto y al expandirlo dentro de un
+		   Round(...) la coma se lee como separador de argumentos. No da error — da
+		   precios de centavos, y solo se ve sumando por ano. */
+		Round(Precio_Base * Pow(1.043, Year(Fecha) - $(vAnioIni))
+			* (1 - RangeMin(Toneladas / 400, 0.12)) * (0.94 + Rand() * 0.12), 0.01)	as Precio_Unitario_USD,
+		/* Costo = 1 − margen. El margen sale del producto, mas lo que negocio el cliente,
+		   mas un poco de ruido por operacion. */
+		1 - RangeMax(0.03, RangeMin(0.55,
+			ApplyMap('MAP_Producto_Margen', %LlaveProducto)
+			+ ApplyMap('MAP_Cliente_SesgoMargen', %LlaveCliente)
+			+ (Rand() - 0.5) * 0.04))						as Factor_Costo
+	;
+	LOAD
+		/* Pow(Rand(), 1.8) en vez de Rand(): sesga la eleccion hacia los primeros
+		   clientes de la ventana. Sin esto los 240 facturan casi lo mismo y un «top 10
+		   de clientes» sale con diez barras identicas, que no es como se reparte la
+		   venta en ninguna empresa. */
+		$(vCliDesde) + RangeMax(1, Ceil(Pow(Rand(), 1.8) * $(vCliRango)))	as %LlaveCliente,
+		%LlaveProducto,
+		Ceil(Rand() * $(vNumVendedores))			as %LlaveVendedor,
+		Date($(vDiaIni) + Floor(Rand() * $(vDias)))		as Fecha,
+		ApplyMap('MAP_Producto_Precio', %LlaveProducto)		as Precio_Base,
+		/* Estacionalidad: el segundo semestre pesa mas que el primero. */
+		Round(RangeMax(0.4, Pow(Rand(), 1.7) * 38), 0.01)	as Toneladas
+	;
+	LOAD
+		Ceil(Rand() * $(vNumProductos))				as %LlaveProducto
+	AutoGenerate $(vFilas);
+
+NEXT vAnio
+
+///$tab PRESUPUESTO
+/*
+	El presupuesto se CONCATENA al hecho. Es la decision de modelo mas importante de la
+	app: una tabla aparte con Anio, Mes, Producto y Pais crearia claves sinteticas contra
+	el calendario, el producto y el pais a la vez.
+
+	Concatenado, real y presupuesto comparten las mismas dimensiones y lo que los separa
+	es el campo `Origen`, que se filtra con set analysis. El presupuesto va al primer dia
+	del mes y sin cliente ni vendedor: ese es su grano real, y forzarlo a bajar a cliente
+	seria inventar un dato que el area nunca dio.
+*/
+
+Presupuesto_Base:
+LOAD
+	Year(Fecha)						as Anio_Ppto,
+	Num(Month(Fecha))					as Mes_Ppto,
+	%LlaveProducto,
+	%LlavePais,
+	Sum(Toneladas)						as Toneladas_Real,
+	Sum(Valor_USD)						as Valor_Real
+RESIDENT Hechos_Comercial
+WHERE Origen = 'Real'
+GROUP BY Year(Fecha), Num(Month(Fecha)), %LlaveProducto, %LlavePais;
+
+/*
+	El ano en curso esta a medias, pero su PRESUPUESTO no: una meta se fija en enero para
+	los doce meses. Los meses que aun no han pasado toman como base el mismo mes del ano
+	anterior — que es literalmente como se presupuesta en la vida real.
+
+	Sin esto, la linea de presupuesto del grafico mensual se desploma a cero en octubre y
+	parece un fallo del tablero cuando lo que falta es el dato.
+*/
+CONCATENATE (Presupuesto_Base)
+LOAD
+	$(vAnioFin)						as Anio_Ppto,
+	Mes_Ppto,
+	%LlaveProducto,
+	%LlavePais,
+	Toneladas_Real,
+	Valor_Real
+RESIDENT Presupuesto_Base
+WHERE Anio_Ppto = $(vAnioFin) - 1 AND Mes_Ppto > Month($(vFechaCorte));
+
+/*
+	La meta sale del real del mismo mes con un factor.
+
+	El factor NO es ruido puro: lleva una parte sistematica por producto y por mes. Con
+	solo ruido, al agregar por linea o por region la media se come la varianza y TODOS los
+	cumplimientos salen en el mismo 93 % — un tablero donde ninguna barra dice nada.
+	Asi hay lineas que cumplen y lineas que no, que es lo que se mira.
+*/
+CONCATENATE (Hechos_Comercial)
+LOAD
+	/* LLAVES */
+	%LlaveProducto,
+	%LlavePais,
+	/* FECHAS */
+	Date(MakeDate(Anio_Ppto, Mes_Ppto, 1))			as Fecha,
+	/* DATOS */
+	'Presupuesto'						as Origen,
+	Round(Toneladas_Real * Factor_Meta, 0.01)		as Toneladas,
+	Round(Valor_Real * Factor_Meta, 0.01)			as Valor_USD
+;
+LOAD
+	*,
+	ApplyMap('MAP_Producto_SesgoMeta', %LlaveProducto)
+		* ApplyMap('MAP_Pais_SesgoMeta', %LlavePais)
+		/* Componente del MES, compartida por todas las filas del mismo mes. Es
+		   pseudoaleatoria pero determinista —Frac(Sin(x)*k) es el truco de toda la vida—
+		   porque un Rand() por fila se promedia al agregar y deja la tabla dinamica con
+		   el mismo porcentaje repetido en los doce meses. */
+		* (0.93 + 0.14 * Frac(Sin(Anio_Ppto * 12 + Mes_Ppto) * 43758.5453))
+		* (0.97 + Rand() * 0.06)			as Factor_Meta
+RESIDENT Presupuesto_Base;
+
+DROP TABLE Presupuesto_Base;
+DROP TABLE Ventana_Cartera;
+
+///$tab CICLO DE VIDA DEL CLIENTE
+/*
+	El primer y el ultimo ano con compra de cada cliente. Se calculan UNA VEZ aqui y se
+	pegan al maestro, en vez de resolverlos con set analysis en cada grafico.
+
+	Es la decision de siempre: lo que no depende de la seleccion se calcula en la carga.
+	Un `Count({<%LlaveCliente = P(...) - P(...)>})` da lo mismo, pero lo recalcula el
+	motor en cada clic, y encima no sobrevive a que alguien filtre por ano.
+*/
+
+LEFT JOIN (Clientes)
+LOAD
+	%LlaveCliente,
+	Min(Year(Fecha))					as Anio_Primera_Compra,
+	Max(Year(Fecha))					as Anio_Ultima_Compra
+RESIDENT Hechos_Comercial
+WHERE Origen = 'Real'
+GROUP BY %LlaveCliente;
+
+LEFT JOIN (Clientes)
+LOAD
+	%LlaveCliente,
+	If(Anio_Ultima_Compra < $(vAnioFin), 'Inactivo', 'Activo')	as Estado_Cliente
+RESIDENT Clientes;
+
+///$tab CALENDARIO
+/*
+	Calendario maestro sobre el rango real del hecho, no sobre un rango escrito a mano:
+	si manana el hecho llega hasta otro dia, el calendario lo sigue solo.
+*/
+
+Temp_Rango:
+LOAD
+	Min(Fecha)						as Fecha_Min,
+	Max(Fecha)						as Fecha_Max
+RESIDENT Hechos_Comercial;
+
+LET vFechaMin	= Num(Peek('Fecha_Min', 0, 'Temp_Rango'));
+LET vFechaMax	= Num(Peek('Fecha_Max', 0, 'Temp_Rango'));
+LET vNumDias	= $(vFechaMax) - $(vFechaMin) + 1;
+
+DROP TABLE Temp_Rango;
+
+Calendario:
+LOAD
+	/* FECHAS */
+	Fecha,
+	Year(Fecha)						as Anio,
+	'T' & Ceil(Month(Fecha) / 3)				as Trimestre,
+	Num(Month(Fecha))					as Mes,
+	Num(Month(Fecha), '00') & ' · ' & Capitalize(Month(Fecha))	as Mes_Nombre,
+	Date(MonthStart(Fecha), 'MMM-YYYY')			as Anio_Mes,
+	Day(Fecha)						as Dia,
+	WeekDay(Fecha)						as Dia_Semana,
+	Week(Fecha)						as Semana,
+	/* DATOS */
+	If(Num(Month(Fecha)) <= Month($(vFechaCorte)), 1, 0)	as Es_Mes_YTD
+;
+LOAD
+	Date($(vFechaMin) + RecNo() - 1)			as Fecha
+AutoGenerate $(vNumDias);
+
+///$tab CONTROL
+/*
+	Auditoria de la carga. No la mira nadie mientras todo cuadra, y es lo primero que se
+	abre el dia que algo no cuadra: cuantas filas entraron, de que fecha a que fecha, y
+	cuanto vale cada mundo. Una recarga que termina "con exito" y trae la mitad de las
+	filas no avisa sola.
+*/
+
+Control_Carga:
+LOAD
+	Origen							as Control_Origen,
+	Count(Origen)						as Control_Filas,
+	Date(Min(Fecha))					as Control_Fecha_Min,
+	Date(Max(Fecha))					as Control_Fecha_Max,
+	Round(Sum(Valor_USD))					as Control_Valor_USD
+RESIDENT Hechos_Comercial
+GROUP BY Origen;
+
+FOR vI = 0 TO NoOfRows('Control_Carga') - 1
+	LET vO = Peek('Control_Origen', $(vI), 'Control_Carga');
+	LET vF = Num(Peek('Control_Filas', $(vI), 'Control_Carga'), '#.##0');
+	LET vV = Num(Peek('Control_Valor_USD', $(vI), 'Control_Carga'), '#.##0');
+	TRACE >> $(vO): $(vF) filas, USD $(vV);
+NEXT vI
+
+SET vFechaMin=;
+SET vFechaMax=;
+SET vNumDias=;
+SET vDiaIni=;
+SET vDiaFin=;
+SET vDias=;
+SET vFilas=;
+SET vFilasAnio=;
+
+SET vI=;
+SET vO=;
+SET vF=;
+SET vV=;
